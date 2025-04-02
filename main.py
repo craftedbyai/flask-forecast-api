@@ -22,16 +22,12 @@ def load_data(file_path="Product_Sales_Data_Final.csv"):
     """Load and preprocess the sales data."""
     try:
         df = pd.read_csv(file_path)
-
         # Convert date to datetime
         df["Date"] = pd.to_datetime(df["Date"])
-
         # Create year-month field
         df["YearMonth"] = df["Date"].dt.strftime("%Y-%m")
-
         # Create month field (for seasonality analysis)
         df["Month"] = df["Date"].dt.month
-
         return df
     except Exception as e:
         logger.error(f"Error loading data: {e}")
@@ -46,18 +42,26 @@ DATA = None
 def initialize():
     """Initialize the data when the API starts."""
     global DATA
-    DATA = load_data()
-    logger.info("Data loaded successfully!")
+    if DATA is None:
+        DATA = load_data()
+        logger.info("Data loaded successfully!")
+
+
+# Helper function to get target date
+def get_target_date(date_param=None):
+    """Get target date from param or use current month"""
+    if date_param is None:
+        today = datetime.now()
+        return datetime(today.year, today.month, 1)
+    return pd.to_datetime(date_param)
 
 
 # Helper functions for forecasting
 def forecast_product_sales(product_id, target_date):
     """Forecast sales for a specific product for a target date."""
     global DATA
-
     # Filter data for the specific product
     product_data = DATA[DATA["Product_ID"] == product_id]
-
     if product_data.empty:
         return {"error": f"No data found for product ID {product_id}"}
 
@@ -106,21 +110,17 @@ def forecast_product_sales(product_id, target_date):
         }
     except Exception as e:
         logger.error(f"Error forecasting for product {product_id}: {e}")
-
         # Fallback to exponential smoothing
         try:
             model = ExponentialSmoothing(
                 monthly_sales, seasonal_periods=12, trend="add", seasonal="add"
             )
             model_fit = model.fit()
-
             # Forecast
             forecast = model_fit.forecast(steps)
             target_sales = max(round(forecast.iloc[-1]), 0)
-
             product_name = product_data["Product_Name"].iloc[-1]
             product_category = product_data["Product_Category"].iloc[-1]
-
             return {
                 "product_id": product_id,
                 "product_name": product_name,
@@ -138,10 +138,8 @@ def forecast_product_sales(product_id, target_date):
 def forecast_category_sales(category, target_date):
     """Forecast sales for a specific category for a target date."""
     global DATA
-
     # Filter data for the specific category
     category_data = DATA[DATA["Product_Category"] == category]
-
     if category_data.empty:
         return {"error": f"No data found for category {category}"}
 
@@ -180,18 +178,15 @@ def forecast_category_sales(category, target_date):
         }
     except Exception as e:
         logger.error(f"Error forecasting for category {category}: {e}")
-
         # Fallback to exponential smoothing
         try:
             model = ExponentialSmoothing(
                 monthly_sales, seasonal_periods=12, trend="add", seasonal="add"
             )
             model_fit = model.fit()
-
             # Forecast
             forecast = model_fit.forecast(steps)
             target_sales = max(round(forecast.iloc[-1]), 0)
-
             return {
                 "category": category,
                 "forecast_date": target_date.strftime("%Y-%m"),
@@ -207,14 +202,12 @@ def forecast_category_sales(category, target_date):
 def get_historical_seasonality():
     """Get historical seasonality factors for better forecasting."""
     global DATA
-
     # Create monthly seasonality factors
     monthly_sales = DATA.groupby(["Month"])["Sales_Quantity"].sum().reset_index()
     total_sales = monthly_sales["Sales_Quantity"].sum()
     monthly_sales["SeasonalityFactor"] = monthly_sales["Sales_Quantity"] / (
         total_sales / 12
     )
-
     return (
         monthly_sales[["Month", "SeasonalityFactor"]]
         .set_index("Month")
@@ -225,9 +218,7 @@ def get_historical_seasonality():
 def get_product_monthly_seasonality(product_id):
     """Get monthly seasonality factors for a specific product."""
     global DATA
-
     product_data = DATA[DATA["Product_ID"] == product_id]
-
     if product_data.empty:
         return None
 
@@ -236,14 +227,12 @@ def get_product_monthly_seasonality(product_id):
         product_data.groupby(["Month"])["Sales_Quantity"].sum().reset_index()
     )
     total_sales = monthly_sales["Sales_Quantity"].sum()
-
     if total_sales == 0:
         return None
 
     monthly_sales["SeasonalityFactor"] = monthly_sales["Sales_Quantity"] / (
         total_sales / 12
     )
-
     return (
         monthly_sales[["Month", "SeasonalityFactor"]]
         .set_index("Month")
@@ -257,7 +246,6 @@ def predict_top_products(target_date, top_n=10):
     and historical seasonality patterns.
     """
     global DATA
-
     # Get unique product IDs
     product_ids = DATA["Product_ID"].unique()
 
@@ -272,7 +260,6 @@ def predict_top_products(target_date, top_n=10):
     top_products = sorted(forecasts, key=lambda x: x["forecasted_sales"], reverse=True)[
         :top_n
     ]
-
     return top_products
 
 
@@ -282,7 +269,6 @@ def predict_top_categories(target_date):
     and historical seasonality patterns.
     """
     global DATA
-
     # Get unique categories
     categories = DATA["Product_Category"].unique()
 
@@ -297,7 +283,6 @@ def predict_top_categories(target_date):
     top_categories = sorted(
         forecasts, key=lambda x: x["forecasted_sales"], reverse=True
     )
-
     return top_categories
 
 
@@ -306,12 +291,10 @@ def predict_top_products_by_category(category, target_date, top_n=5):
     Predict the top N products for a specific category for a target date.
     """
     global DATA
-
     # Ensure category filtering is strict
     category_products = DATA[
         DATA["Product_Category"].str.strip().str.lower() == category.lower()
     ]["Product_ID"].unique()
-    print(f"Category: {category}, Products found: {len(category_products)}")
 
     forecasts = []
     for product_id in category_products:
@@ -324,26 +307,323 @@ def predict_top_products_by_category(category, target_date, top_n=5):
         f for f in forecasts if f.get("category", "").lower() == category.lower()
     ]
 
-    # Debugging print
-    print(f"Filtered Forecasts for {category}: {forecasts}")
-
     # Sort by forecasted sales and get top N
     top_products = sorted(forecasts, key=lambda x: x["forecasted_sales"], reverse=True)[
         :top_n
     ]
-
     return top_products
 
 
-# API Endpoints
+# RESTRUCTURED API ENDPOINTS
+# --------------------------
+
+
+# 1. Top Products Endpoint
+@app.route("/api/top-products", methods=["GET"])
+def get_top_products():
+    """
+    Endpoint to get top products forecast
+
+    Query Parameters:
+    - date: Target date in YYYY-MM format (default: current month)
+    - top_n: Number of top products to return (default: 10)
+
+    Returns:
+    JSON with top products forecast
+    """
+    # Get query parameters
+    target_date = request.args.get("date", None)
+    top_n = int(request.args.get("top_n", 10))
+
+    # Process target date
+    target_date = get_target_date(target_date)
+
+    try:
+        # Predict top products
+        top_products = predict_top_products(target_date, top_n)
+
+        return jsonify(
+            {
+                "forecast_date": target_date.strftime("%Y-%m"),
+                "top_products": top_products,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error generating top products forecast: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# 2. Top Categories Endpoint
+@app.route("/api/top-categories", methods=["GET"])
+def get_top_categories():
+    """
+    Endpoint to get top categories forecast
+
+    Query Parameters:
+    - date: Target date in YYYY-MM format (default: current month)
+
+    Returns:
+    JSON with top categories forecast
+    """
+    # Get query parameters
+    target_date = request.args.get("date", None)
+
+    # Process target date
+    target_date = get_target_date(target_date)
+
+    try:
+        # Predict top categories
+        top_categories = predict_top_categories(target_date)
+
+        return jsonify(
+            {
+                "forecast_date": target_date.strftime("%Y-%m"),
+                "top_categories": top_categories,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error generating top categories forecast: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# 3. Category-Specific Top Products Endpoint
+@app.route("/api/category/<category>/top-products", methods=["GET"])
+def get_category_top_products(category):
+    """
+    Endpoint to get top products for a specific category
+
+    Path Parameters:
+    - category: Category name
+
+    Query Parameters:
+    - date: Target date in YYYY-MM format (default: current month)
+    - top_n: Number of top products to return (default: 5)
+
+    Returns:
+    JSON with top products for the specified category
+    """
+    # Get query parameters
+    target_date = request.args.get("date", None)
+    top_n = int(request.args.get("top_n", 5))
+
+    # Process target date
+    target_date = get_target_date(target_date)
+
+    try:
+        # Get top products for the category
+        category_top_products = predict_top_products_by_category(
+            category, target_date, top_n
+        )
+
+        # Get category forecast
+        category_forecast = forecast_category_sales(category, target_date)
+
+        return jsonify(
+            {
+                "forecast_date": target_date.strftime("%Y-%m"),
+                "category": category,
+                "category_forecast": (
+                    category_forecast.get("forecasted_sales", 0)
+                    if "error" not in category_forecast
+                    else 0
+                ),
+                "top_products": category_top_products,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error generating category top products forecast: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# 4. Single Product Forecast Endpoint
+@app.route("/api/product/<product_id>/forecast", methods=["GET"])
+def get_product_forecast(product_id):
+    """
+    Endpoint to get forecast for a specific product
+
+    Path Parameters:
+    - product_id: ID of the product to forecast
+
+    Query Parameters:
+    - date: Target date in YYYY-MM format (default: current month)
+    - months: Number of months to forecast (default: 1)
+
+    Returns:
+    JSON with forecast results for the product
+    """
+    # Get query parameters
+    target_date = request.args.get("date", None)
+    months = int(request.args.get("months", 1))
+
+    # Process target date
+    target_date = get_target_date(target_date)
+
+    try:
+        # Get base forecast for the target date
+        base_forecast = forecast_product_sales(product_id, target_date)
+
+        if "error" in base_forecast:
+            return jsonify(base_forecast), 404
+
+        # If multiple months requested, generate forecasts for each month
+        if months > 1:
+            monthly_forecasts = [base_forecast]
+
+            for i in range(1, months):
+                next_month = target_date + pd.DateOffset(months=i)
+                forecast = forecast_product_sales(product_id, next_month)
+
+                if "error" not in forecast:
+                    monthly_forecasts.append(forecast)
+
+            return jsonify(
+                {
+                    "product_id": product_id,
+                    "product_name": base_forecast["product_name"],
+                    "category": base_forecast["category"],
+                    "monthly_forecasts": monthly_forecasts,
+                }
+            )
+        else:
+            return jsonify(base_forecast)
+    except Exception as e:
+        logger.error(f"Error generating forecast for product {product_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# 5. Product Seasonality Endpoint
+@app.route("/api/product/<product_id>/seasonality", methods=["GET"])
+def get_product_seasonality(product_id):
+    """
+    Endpoint to get seasonality factors for a specific product
+
+    Path Parameters:
+    - product_id: ID of the product
+
+    Returns:
+    JSON with monthly seasonality factors
+    """
+    try:
+        seasonality = get_product_monthly_seasonality(product_id)
+
+        if seasonality is None:
+            return (
+                jsonify(
+                    {"error": f"No seasonality data available for product {product_id}"}
+                ),
+                404,
+            )
+
+        # Convert to list format for easier consumption
+        seasonality_list = [
+            {"month": month, "factor": factor} for month, factor in seasonality.items()
+        ]
+
+        # Get product info
+        product_data = DATA[DATA["Product_ID"] == product_id]
+
+        if product_data.empty:
+            return jsonify({"error": f"Product {product_id} not found"}), 404
+
+        product_name = product_data["Product_Name"].iloc[-1]
+        product_category = product_data["Product_Category"].iloc[-1]
+
+        return jsonify(
+            {
+                "product_id": product_id,
+                "product_name": product_name,
+                "category": product_category,
+                "seasonality": seasonality_list,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error getting seasonality for product {product_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# 6. Overall Seasonality Endpoint
+@app.route("/api/seasonality", methods=["GET"])
+def get_overall_seasonality():
+    """
+    Endpoint to get overall seasonality factors across all products
+
+    Returns:
+    JSON with monthly seasonality factors
+    """
+    try:
+        seasonality = get_historical_seasonality()
+
+        # Convert to list format for easier consumption
+        seasonality_list = [
+            {"month": month, "factor": factor} for month, factor in seasonality.items()
+        ]
+
+        return jsonify({"seasonality": seasonality_list})
+    except Exception as e:
+        logger.error(f"Error getting overall seasonality: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# 7. Categories List Endpoint
+@app.route("/api/categories", methods=["GET"])
+def get_categories():
+    """
+    Endpoint to get list of all product categories
+
+    Returns:
+    JSON with list of all categories
+    """
+    try:
+        categories = DATA["Product_Category"].unique().tolist()
+        return jsonify({"categories": categories})
+    except Exception as e:
+        logger.error(f"Error getting categories: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# 8. Products List Endpoint
+@app.route("/api/products", methods=["GET"])
+def get_products():
+    """
+    Endpoint to get list of all products
+
+    Query Parameters:
+    - category: Filter products by category (optional)
+
+    Returns:
+    JSON with list of products
+    """
+    try:
+        category = request.args.get("category", None)
+
+        if category:
+            filtered_data = DATA[
+                DATA["Product_Category"].str.lower() == category.lower()
+            ]
+        else:
+            filtered_data = DATA
+
+        products = (
+            filtered_data[["Product_ID", "Product_Name", "Product_Category"]]
+            .drop_duplicates()
+            .to_dict("records")
+        )
+
+        return jsonify({"products": products})
+    except Exception as e:
+        logger.error(f"Error getting products: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Original combined endpoint (now as a separate option)
 @app.route("/api/forecasts", methods=["GET"])
 def get_forecasts():
     """
-    Main forecast endpoint that returns top products, top category,
+    Combined forecast endpoint that returns top products, top categories,
     and top products in each category.
 
     Query Parameters:
-    - date: Target date in YYYY-MM format (default: next month)
+    - date: Target date in YYYY-MM format (default: current month)
     - top_n: Number of top products to return (default: 10)
 
     Returns:
@@ -353,16 +633,8 @@ def get_forecasts():
     target_date = request.args.get("date", None)
     top_n = int(request.args.get("top_n", 10))
 
-    # If no date provided, use next month
-    if target_date is None:
-        today = datetime.now()
-        # if today.month == 12:
-        #     next_month = datetime(today.year + 1, 1, 1)
-        # else:
-        #     next_month = datetime(today.year, today.month + 1, 1)
-
-        next_month = datetime(today.year, today.month, 1)
-        target_date = next_month.strftime("%Y-%m")
+    # Process target date
+    target_date = get_target_date(target_date)
 
     try:
         # Predict top products overall
@@ -383,80 +655,15 @@ def get_forecasts():
 
         # Prepare response
         response = {
-            "forecast_date": target_date,
+            "forecast_date": target_date.strftime("%Y-%m"),
             "top_products": top_products,
             "top_categories": top_categories,
             "top_products_by_category": top_category_products,
         }
 
         return jsonify(response)
-
     except Exception as e:
         logger.error(f"Error generating forecasts: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/product-forecast/<product_id>", methods=["GET"])
-def get_product_forecast(product_id):
-    """
-    Endpoint to get forecast for a specific product.
-
-    Path Parameters:
-    - product_id: ID of the product to forecast
-
-    Query Parameters:
-    - date: Target date in YYYY-MM format (default: next month)
-    - months: Number of months to forecast (default: 1)
-
-    Returns:
-    JSON with forecast results
-    """
-    # Get query parameters
-    target_date = request.args.get("date", None)
-    months = int(request.args.get("months", 1))
-
-    # If no date provided, use next month
-    if target_date is None:
-        today = datetime.now()
-        # if today.month == 12:
-        #     next_month = datetime(today.year + 1, 1, 1)
-        # else:
-        #     next_month = datetime(today.year, today.month + 1, 1)
-
-        next_month = datetime(today.year, today.month, 1)
-        target_date = next_month.strftime("%Y-%m")
-
-    try:
-        # Get base forecast for the target date
-        base_forecast = forecast_product_sales(product_id, target_date)
-
-        if "error" in base_forecast:
-            return jsonify(base_forecast), 404
-
-        # If multiple months requested, generate forecasts for each month
-        if months > 1:
-            monthly_forecasts = [base_forecast]
-            target_dt = pd.to_datetime(target_date)
-
-            for i in range(1, months):
-                next_month = target_dt + pd.DateOffset(months=i)
-                forecast = forecast_product_sales(product_id, next_month)
-                if "error" not in forecast:
-                    monthly_forecasts.append(forecast)
-
-            return jsonify(
-                {
-                    "product_id": product_id,
-                    "product_name": base_forecast["product_name"],
-                    "category": base_forecast["category"],
-                    "monthly_forecasts": monthly_forecasts,
-                }
-            )
-        else:
-            return jsonify(base_forecast)
-
-    except Exception as e:
-        logger.error(f"Error generating forecast for product {product_id}: {e}")
         return jsonify({"error": str(e)}), 500
 
 
